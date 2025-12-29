@@ -1,0 +1,46 @@
+{
+  "name": "PyTorch ML Project",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.debugpy",
+        "ms-tools-vscode.ms-dotnettools.csharp",
+        "ms-vscode.makefile-tools",
+        "GitHub.copilot",
+        "Jupyter.jupyter",
+        "Jupyter.jupyter-keymap",
+        "Jupyter.jupyter-notebook-renderers",
+        "ms-toolsai.jupyter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/conda/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.formatting.provider": "black",
+        "python.testing.pytestEnabled": true,
+        "jupyter.notebookFileRoot": "${workspaceFolder}"
+      }
+    }
+  },
+  "postCreateCommand": "pip install -e . 2>/dev/null || true",
+  "remoteUser": "dev",
+  "forwardPorts": [
+    6006,
+    8888
+  ],
+  "portsAttributes": {
+    "6006": {
+      "label": "TensorBoard",
+      "onAutoForward": "silent"
+    },
+    "8888": {
+      "label": "Jupyter",
+      "onAutoForward": "silent"
+    }
+  }
+}
