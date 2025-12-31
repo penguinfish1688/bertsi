@@ -237,9 +237,9 @@ class TranslationDataPipeline:
         self.val_dataset = None
         self.test_dataset = None
     
-    def _get_cache_path(self, use_sample: bool) -> str:
+    def _get_cache_path(self, use_sample: bool, train_ratio: float = 0.8, val_ratio: float = 0.1) -> str:
         """Generate cache file path based on config"""
-        cache_key = f"sample_{use_sample}_freq_{self.config.min_freq}"
+        cache_key = f"sample_{use_sample}_freq_{self.config.min_freq}_train_{train_ratio}_val_{val_ratio}"
         cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
         return os.path.join(self.config.cache_dir, f"dataset_{cache_hash}.pkl")
     
@@ -274,17 +274,7 @@ class TranslationDataPipeline:
         print("📂 LOADING DATA")
         print("="*60)
         
-        # Check cache first if configured
-        cache_path = self._get_cache_path(use_sample)
-        
-        if self.config.use_cached_dataset and not self.config.download_new:
-            cached_data = self._load_cache(cache_path)
-            if cached_data is not None:
-                return cached_data['src_sentences'], cached_data['tgt_sentences']
-            else:
-                print("⚠️  No cached dataset found, will download new data...")
-        
-        # Download new data
+        # Download data (caching happens in prepare_data after tokenization)
         if use_sample:
             print("📝 Using sample dataset for testing...")
             src_sentences, tgt_sentences = download_sample_data()
@@ -297,17 +287,10 @@ class TranslationDataPipeline:
             print(f"   [{i+1}] ZH: {src_sentences[i]}")
             print(f"       EN: {tgt_sentences[i]}")
         
-        # Save to cache
-        cache_data = {
-            'src_sentences': src_sentences,
-            'tgt_sentences': tgt_sentences
-        }
-        self._save_cache(cache_data, cache_path)
-        
         return src_sentences, tgt_sentences
     
     def prepare_data(self, src_sentences: List[str], tgt_sentences: List[str],
-                    train_ratio: float = 0.8, val_ratio: float = 0.1) -> Dict:
+                    train_ratio: float = 0.8, val_ratio: float = 0.1, use_sample: bool = True) -> Dict:
         """
         Prepare data: tokenize, build vocab, split, and create datasets
         
@@ -316,6 +299,7 @@ class TranslationDataPipeline:
             tgt_sentences: English sentences
             train_ratio: Ratio for training set
             val_ratio: Ratio for validation set
+            use_sample: Whether using sample data (for cache key)
         
         Returns:
             Dictionary with datasets and info
@@ -324,7 +308,44 @@ class TranslationDataPipeline:
         print("⚙️  PREPARING DATA")
         print("="*60)
         
-        # Step 1: Build vocabularies
+        # Check if we should use cached dataset
+        cache_path = self._get_cache_path(use_sample, train_ratio, val_ratio)
+        
+        if self.config.use_cached_dataset and not self.config.download_new:
+            cached_data = self._load_cache(cache_path)
+            if cached_data is not None:
+                # Restore vocabularies
+                self.tokenizer.src_vocab = cached_data['src_vocab']
+                self.tokenizer.tgt_vocab = cached_data['tgt_vocab']
+                
+                # Restore datasets
+                self.train_dataset = TranslationDataset(
+                    cached_data['train_src_encoded'],
+                    cached_data['train_tgt_encoded']
+                )
+                self.val_dataset = TranslationDataset(
+                    cached_data['val_src_encoded'],
+                    cached_data['val_tgt_encoded']
+                )
+                self.test_dataset = TranslationDataset(
+                    cached_data['test_src_encoded'],
+                    cached_data['test_tgt_encoded']
+                )
+                
+                print("\n" + "="*60)
+                print("✅ DATA LOADED FROM CACHE")
+                print("="*60)
+                
+                return {
+                    "train_size": len(self.train_dataset),
+                    "val_size": len(self.val_dataset),
+                    "test_size": len(self.test_dataset),
+                    "src_vocab_size": len(self.tokenizer.src_vocab),
+                    "tgt_vocab_size": len(self.tokenizer.tgt_vocab),
+                }
+        
+        # Process data from scratch
+        # Step 1: Build vocabularies (includes tokenization with jieba)
         src_tokenized, tgt_tokenized = self.tokenizer.build_vocabularies(
             src_sentences, tgt_sentences, 
             min_freq=self.config.min_freq
@@ -364,20 +385,31 @@ class TranslationDataPipeline:
         # Step 4: Create datasets
         print(f"\n📊 Step 7: Creating PyTorch datasets...")
         
-        self.train_dataset = TranslationDataset(
-            [src_encoded[i] for i in train_indices],
-            [tgt_encoded[i] for i in train_indices]
-        )
-        self.val_dataset = TranslationDataset(
-            [src_encoded[i] for i in val_indices],
-            [tgt_encoded[i] for i in val_indices]
-        )
-        self.test_dataset = TranslationDataset(
-            [src_encoded[i] for i in test_indices],
-            [tgt_encoded[i] for i in test_indices]
-        )
+        train_src_encoded = [src_encoded[i] for i in train_indices]
+        train_tgt_encoded = [tgt_encoded[i] for i in train_indices]
+        val_src_encoded = [src_encoded[i] for i in val_indices]
+        val_tgt_encoded = [tgt_encoded[i] for i in val_indices]
+        test_src_encoded = [src_encoded[i] for i in test_indices]
+        test_tgt_encoded = [tgt_encoded[i] for i in test_indices]
+        
+        self.train_dataset = TranslationDataset(train_src_encoded, train_tgt_encoded)
+        self.val_dataset = TranslationDataset(val_src_encoded, val_tgt_encoded)
+        self.test_dataset = TranslationDataset(test_src_encoded, test_tgt_encoded)
         
         print(f"   ✅ Datasets created successfully!")
+        
+        # Save complete processed dataset to cache
+        cache_data = {
+            'src_vocab': self.tokenizer.src_vocab,
+            'tgt_vocab': self.tokenizer.tgt_vocab,
+            'train_src_encoded': train_src_encoded,
+            'train_tgt_encoded': train_tgt_encoded,
+            'val_src_encoded': val_src_encoded,
+            'val_tgt_encoded': val_tgt_encoded,
+            'test_src_encoded': test_src_encoded,
+            'test_tgt_encoded': test_tgt_encoded,
+        }
+        self._save_cache(cache_data, cache_path)
         
         print("\n" + "="*60)
         print("✅ DATA PREPARATION COMPLETE")
@@ -463,7 +495,7 @@ def create_pipeline(use_sample: bool = True, config=None):
     
     # Load and prepare data
     src_sentences, tgt_sentences = pipeline.load_data(use_sample=use_sample)
-    info = pipeline.prepare_data(src_sentences, tgt_sentences)
+    info = pipeline.prepare_data(src_sentences, tgt_sentences, use_sample=use_sample)
     
     print("\n" + "="*60)
     print("📋 PIPELINE SUMMARY")

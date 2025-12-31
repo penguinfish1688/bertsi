@@ -20,7 +20,7 @@ from transformer.data.dataset import create_pipeline
 from transformer.models.transformer import Transformer
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, epoch):
+def train_epoch(model, dataloader, optimizer, criterion, device, epoch, max_len):
     """Train for one epoch"""
     model.train()
     total_loss = 0
@@ -33,6 +33,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch):
         tgt_batch = tgt_batch.to(device)
         
         # Teacher forcing: use all but last target token as input
+        tgt_len = tgt_batch.size(1)
+        if tgt_len > max_len:
+            tgt_batch = tgt_batch[:, :max_len]
         tgt_input = tgt_batch[:, :-1] # (batch_size, tgt_len - 1)
         tgt_output = tgt_batch[:, 1:] # (batch_size, tgt_len - 1)
 
@@ -182,7 +185,7 @@ def train(config_path="transformer/config.yaml", use_sample=True):
         start_time = time.time()
         
         # Train
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch, config.max_len)
         
         # Validate
         val_loss = evaluate(model, val_loader, criterion, device)

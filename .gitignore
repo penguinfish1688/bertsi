@@ -5,3 +5,10 @@ __pycache__/
 venv/
 .env/
 config.yaml
+
+# Dataset cache and checkpoints
+data/translation/cache/
+*.pkl
+checkpoints/
+*.pt
+best_model.pt
