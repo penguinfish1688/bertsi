@@ -12,3 +12,5 @@ data/translation/cache/
 checkpoints/
 *.pt
 best_model.pt
+*.pyc
+*.pkl

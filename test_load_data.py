@@ -1,8 +1,4 @@
 from transformer.data.dataset import download_wmt_sample
+from transformer.train.train_translation import load_model_and_translate
 
-def test_download_wmt_sample():
-    """Test downloading WMT sample dataset"""
-    chinese_sentences, english_sentences = download_wmt_sample()
-    print(chinese_sentences[:3], english_sentences[:3])
-
-test_download_wmt_sample()
+load_model_and_translate()

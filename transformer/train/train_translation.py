@@ -138,8 +138,114 @@ def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu"):
     return " ".join(result_tokens)
 
 
-def train(config_path="transformer/config.yaml", use_sample=True):
-    """Main training function"""
+def load_model_and_translate(checkpoint_path, config_path="transformer/config.yaml", 
+                             test_sentences=None, use_sample=True):
+    """
+    Load a saved model checkpoint and run translation examples
+    
+    Args:
+        checkpoint_path: Path to the checkpoint file (e.g., 'checkpoints/best_model.pt')
+        config_path: Path to the YAML config file
+        test_sentences: List of Chinese sentences to translate (default: predefined examples)
+        use_sample: Whether to use sample data for loading vocabularies
+    
+    Returns:
+        Tuple of (model, tokenizer)
+    """
+    print("\n" + "="*60)
+    print("📥 LOADING MODEL AND RUNNING TRANSLATIONS")
+    print("="*60)
+    
+    # Load config from YAML
+    from transformer.data.config import TranslationConfig
+    config = TranslationConfig.from_yaml(config_path)
+    
+    print(f"\n📋 Configuration loaded from: {config_path}")
+    print(f"   - Model: {config.num_layers} layers, {config.embed_dim} dim, {config.num_heads} heads")
+    print(f"   - Max length: {config.max_len}")
+    
+    # Create pipeline to get tokenizer and vocabularies
+    # We need this to load the vocabulary for encoding/decoding
+    print(f"\n📚 Loading vocabularies...")
+    pipeline, tokenizer, _ = create_pipeline(use_sample=use_sample, config=config)
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\n📱 Device: {device}")
+    
+    # Create model with same architecture
+    model = Transformer(
+        src_vocab_size=len(tokenizer.src_vocab),
+        tgt_vocab_size=len(tokenizer.tgt_vocab),
+        embed_dim=config.embed_dim,
+        num_heads=config.num_heads,
+        num_layers=config.num_layers,
+        max_len=config.max_len,
+        dropout=config.dropout,
+        src_pad_idx=tokenizer.src_vocab.pad_idx,
+        tgt_pad_idx=tokenizer.tgt_vocab.pad_idx
+    ).to(device)
+    
+    # Load checkpoint
+    print(f"\n💾 Loading checkpoint from: {checkpoint_path}")
+    if not os.path.exists(checkpoint_path):
+        print(f"❌ Error: Checkpoint file not found at {checkpoint_path}")
+        return None, None
+    
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Load model state
+    if 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print(f"✅ Model loaded successfully!")
+        print(f"   - Trained for {checkpoint.get('epoch', 'unknown')} epochs")
+        print(f"   - Training loss: {checkpoint.get('train_loss', 'unknown'):.4f}")
+        print(f"   - Validation loss: {checkpoint.get('val_loss', 'unknown'):.4f}")
+    else:
+        # Old format - just model state dict
+        model.load_state_dict(checkpoint)
+        print(f"✅ Model loaded successfully (old format)")
+    
+    model.eval()
+    
+    # Default test sentences if none provided
+    if test_sentences is None:
+        test_sentences = [
+            "你好",
+            "谢谢你",
+            "我喜欢学习中文",
+            "今天天气很好",
+            "我住在北京",
+            "这本书很有趣",
+            "明天见",
+            "祝你好运"
+        ]
+    
+    # Run translations
+    print("\n" + "="*60)
+    print("🔮 TRANSLATION EXAMPLES")
+    print("="*60)
+    
+    for i, src in enumerate(test_sentences, 1):
+        translation = greedy_decode(model, src, tokenizer, config.max_len, device=device)
+        print(f"\n[{i}]")
+        print(f"   🇨🇳 Chinese: {src}")
+        print(f"   🇺🇸 English: {translation}")
+    
+    print("\n" + "="*60)
+    print("✅ Translation complete!")
+    print("="*60)
+    
+    return model, tokenizer
+
+
+def train(config_path="transformer/config.yaml", use_sample=True, resume_from=None):
+    """Main training function
+    
+    Args:
+        config_path: Path to YAML config file
+        use_sample: Whether to use sample dataset
+        resume_from: Path to checkpoint to resume training from (optional)
+    """
     
     print("\n" + "="*60)
     print("🎓 CHINESE-ENGLISH TRANSLATION TRAINING")
@@ -156,6 +262,8 @@ def train(config_path="transformer/config.yaml", use_sample=True):
     print(f"   - Checkpoint frequency: {config.checkpoint_frequency}")
     print(f"   - Use cached dataset: {config.use_cached_dataset}")
     print(f"   - Download new data: {config.download_new}")
+    if resume_from:
+        print(f"   - Resume from: {resume_from}")
     
     # Create pipeline
     pipeline, tokenizer, _ = create_pipeline(use_sample=use_sample, config=config)
@@ -184,18 +292,55 @@ def train(config_path="transformer/config.yaml", use_sample=True):
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, betas=(0.9, 0.98), eps=1e-9)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.tgt_vocab.pad_idx)
     
+    # Load checkpoint if resuming
+    start_epoch = 1
+    best_val_loss = float('inf')
+    
+    if resume_from:
+        if os.path.exists(resume_from):
+            print(f"\n📥 Loading checkpoint from: {resume_from}")
+            checkpoint = torch.load(resume_from, map_location=device)
+            
+            # Load model state
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+                print(f"   ✅ Model state loaded")
+            else:
+                model.load_state_dict(checkpoint)
+                print(f"   ✅ Model state loaded (old format)")
+            
+            # Load optimizer state
+            if 'optimizer_state_dict' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                print(f"   ✅ Optimizer state loaded")
+            
+            # Get start epoch and best loss
+            if 'epoch' in checkpoint:
+                start_epoch = checkpoint['epoch'] + 1
+                print(f"   ✅ Resuming from epoch {start_epoch}")
+            
+            if 'val_loss' in checkpoint:
+                best_val_loss = checkpoint['val_loss']
+                print(f"   ✅ Previous best val_loss: {best_val_loss:.4f}")
+            
+            print(f"   📊 Previous training loss: {checkpoint.get('train_loss', 'N/A')}")
+        else:
+            print(f"\n⚠️  Warning: Checkpoint file not found at {resume_from}")
+            print(f"   Starting training from scratch...")
+    
     # DataLoaders
     train_loader = pipeline.get_dataloader("train", shuffle=True)
     val_loader = pipeline.get_dataloader("val", shuffle=False)
     
     # Training loop
-    print(f"\n🚀 Starting training for {config.num_epochs} epochs...")
+    if resume_from and start_epoch > 1:
+        print(f"\n🚀 Resuming training from epoch {start_epoch} to {config.num_epochs}...")
+    else:
+        print(f"\n🚀 Starting training for {config.num_epochs} epochs...")
     print(f"   Checkpoints will be saved every {config.checkpoint_frequency} epochs")
     print("-" * 60)
     
-    best_val_loss = float('inf')
-    
-    for epoch in range(1, config.num_epochs + 1):
+    for epoch in range(start_epoch, config.num_epochs + 1):
         start_time = time.time()
         
         # Train
@@ -253,8 +398,37 @@ def train(config_path="transformer/config.yaml", use_sample=True):
 
 
 if __name__ == "__main__":
-    # Train using YAML config
-    model, tokenizer = train(
-        config_path="transformer/config.yaml",
-        use_sample=False
-    )
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Train or test Chinese-English translation model')
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'],
+                        help='Mode: train a new model or test existing model')
+    parser.add_argument('--checkpoint', type=str, default='checkpoints/best_model.pt',
+                        help='Path to checkpoint file (for test mode or resume training)')
+    parser.add_argument('--config', type=str, default='transformer/config.yaml',
+                        help='Path to config YAML file')
+    parser.add_argument('--use_sample', action='store_true',
+                        help='Use sample data instead of full dataset')
+    parser.add_argument('--resume', action='store_true',
+                        help='Resume training from checkpoint (use with --checkpoint)')
+    parser.add_argument('--sentences', type=str, nargs='+',
+                        help='Custom sentences to translate (for test mode)')
+    
+    args = parser.parse_args()
+    
+    if args.mode == 'train':
+        # Train using YAML config
+        resume_checkpoint = args.checkpoint if args.resume else None
+        model, tokenizer = train(
+            config_path=args.config,
+            use_sample=args.use_sample,
+            resume_from=resume_checkpoint
+        )
+    else:
+        # Test mode - load and translate
+        model, tokenizer = load_model_and_translate(
+            checkpoint_path=args.checkpoint,
+            config_path=args.config,
+            test_sentences=args.sentences,
+            use_sample=args.use_sample
+        )
