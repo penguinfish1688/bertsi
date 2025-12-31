@@ -6,12 +6,15 @@ This module provides:
 2. PyTorch Dataset class
 3. Collate function for batching with padding
 4. DataLoader creation
+5. Dataset caching for faster loading
 """
 import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 from typing import List, Tuple, Optional, Dict
 import random
+import pickle
+import hashlib
 
 
 class TranslationDataset(Dataset):
@@ -134,7 +137,7 @@ def download_sample_data() -> Tuple[List[str], List[str]]:
     return chinese_sentences, english_sentences
 
 
-def download_wmt_sample(num_samples: int = 10000000) -> Tuple[List[str], List[str]]:
+def download_wmt_sample(num_samples: int = 1000) -> Tuple[List[str], List[str]]:
     """
     Download a sample from WMT translation datasets using HuggingFace datasets.
     
@@ -234,6 +237,32 @@ class TranslationDataPipeline:
         self.val_dataset = None
         self.test_dataset = None
     
+    def _get_cache_path(self, use_sample: bool) -> str:
+        """Generate cache file path based on config"""
+        cache_key = f"sample_{use_sample}_freq_{self.config.min_freq}"
+        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
+        return os.path.join(self.config.cache_dir, f"dataset_{cache_hash}.pkl")
+    
+    def _save_cache(self, data: Dict, cache_path: str):
+        """Save processed dataset to cache"""
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, 'wb') as f:
+            pickle.dump(data, f)
+        print(f"💾 Saved dataset cache to {cache_path}")
+    
+    def _load_cache(self, cache_path: str) -> Optional[Dict]:
+        """Load processed dataset from cache"""
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'rb') as f:
+                    data = pickle.load(f)
+                print(f"📦 Loaded dataset from cache: {cache_path}")
+                return data
+            except Exception as e:
+                print(f"⚠️  Failed to load cache: {e}")
+                return None
+        return None
+    
     def load_data(self, use_sample: bool = True) -> Tuple[List[str], List[str]]:
         """
         Load parallel corpus data
@@ -245,17 +274,35 @@ class TranslationDataPipeline:
         print("📂 LOADING DATA")
         print("="*60)
         
+        # Check cache first if configured
+        cache_path = self._get_cache_path(use_sample)
+        
+        if self.config.use_cached_dataset and not self.config.download_new:
+            cached_data = self._load_cache(cache_path)
+            if cached_data is not None:
+                return cached_data['src_sentences'], cached_data['tgt_sentences']
+            else:
+                print("⚠️  No cached dataset found, will download new data...")
+        
+        # Download new data
         if use_sample:
             print("📝 Using sample dataset for testing...")
             src_sentences, tgt_sentences = download_sample_data()
         else:
-            src_sentences, tgt_sentences = download_wmt_sample()
+            src_sentences, tgt_sentences = download_wmt_sample(num_samples=self.config.max_samples or 1000)
         
         print(f"✅ Loaded {len(src_sentences)} parallel sentence pairs")
         print(f"\n📊 Sample pairs:")
         for i in range(min(3, len(src_sentences))):
             print(f"   [{i+1}] ZH: {src_sentences[i]}")
             print(f"       EN: {tgt_sentences[i]}")
+        
+        # Save to cache
+        cache_data = {
+            'src_sentences': src_sentences,
+            'tgt_sentences': tgt_sentences
+        }
+        self._save_cache(cache_data, cache_path)
         
         return src_sentences, tgt_sentences
     
@@ -388,12 +435,13 @@ class TranslationDataPipeline:
         return src_batch, tgt_batch
 
 
-def create_pipeline(use_sample: bool = True):
+def create_pipeline(use_sample: bool = True, config=None):
     """
     Convenience function to create complete data pipeline
     
     Args:
         use_sample: Use sample data (True) or download full dataset (False)
+        config: TranslationConfig instance (if None, will create default)
     
     Returns:
         Tuple of (pipeline, tokenizer, config)
@@ -406,7 +454,8 @@ def create_pipeline(use_sample: bool = True):
     print("🚀"*30)
     
     # Create config and tokenizer
-    config = TranslationConfig()
+    if config is None:
+        config = TranslationConfig()
     tokenizer = TranslationTokenizer(config)
     
     # Create pipeline

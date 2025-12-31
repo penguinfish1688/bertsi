@@ -121,16 +121,27 @@ def greedy_decode(model, src_sentence, tokenizer, max_len=50, device="cpu"):
     return " ".join(result_tokens)
 
 
-def train(num_epochs=10, embed_dim=256, num_heads=8, num_layers=4, 
-          learning_rate=1e-4, use_sample=True):
+def train(config_path="transformer/config.yaml", use_sample=True):
     """Main training function"""
     
     print("\n" + "="*60)
     print("🎓 CHINESE-ENGLISH TRANSLATION TRAINING")
     print("="*60)
     
+    # Load config from YAML
+    from transformer.data.config import TranslationConfig
+    config = TranslationConfig.from_yaml(config_path)
+    
+    print(f"\n📋 Configuration loaded from: {config_path}")
+    print(f"   - Epochs: {config.num_epochs}")
+    print(f"   - Batch size: {config.batch_size}")
+    print(f"   - Learning rate: {config.learning_rate}")
+    print(f"   - Checkpoint frequency: {config.checkpoint_frequency}")
+    print(f"   - Use cached dataset: {config.use_cached_dataset}")
+    print(f"   - Download new data: {config.download_new}")
+    
     # Create pipeline
-    pipeline, tokenizer, config = create_pipeline(use_sample=use_sample)
+    pipeline, tokenizer, _ = create_pipeline(use_sample=use_sample, config=config)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n📱 Device: {device}")
@@ -139,9 +150,9 @@ def train(num_epochs=10, embed_dim=256, num_heads=8, num_layers=4,
     model = Transformer(
         src_vocab_size=len(tokenizer.src_vocab),
         tgt_vocab_size=len(tokenizer.tgt_vocab),
-        embed_dim=embed_dim,
-        num_heads=num_heads,
-        num_layers=num_layers,
+        embed_dim=config.embed_dim,
+        num_heads=config.num_heads,
+        num_layers=config.num_layers,
         max_len=config.max_len,
         dropout=config.dropout,
         src_pad_idx=tokenizer.src_vocab.pad_idx,
@@ -153,7 +164,7 @@ def train(num_epochs=10, embed_dim=256, num_heads=8, num_layers=4,
     print(f"📊 Model parameters: {num_params:,}")
     
     # Optimizer and loss
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.98), eps=1e-9)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, betas=(0.9, 0.98), eps=1e-9)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.tgt_vocab.pad_idx)
     
     # DataLoaders
@@ -161,12 +172,13 @@ def train(num_epochs=10, embed_dim=256, num_heads=8, num_layers=4,
     val_loader = pipeline.get_dataloader("val", shuffle=False)
     
     # Training loop
-    print(f"\n🚀 Starting training for {num_epochs} epochs...")
+    print(f"\n🚀 Starting training for {config.num_epochs} epochs...")
+    print(f"   Checkpoints will be saved every {config.checkpoint_frequency} epochs")
     print("-" * 60)
     
     best_val_loss = float('inf')
     
-    for epoch in range(1, num_epochs + 1):
+    for epoch in range(1, config.num_epochs + 1):
         start_time = time.time()
         
         # Train
@@ -180,8 +192,27 @@ def train(num_epochs=10, embed_dim=256, num_heads=8, num_layers=4,
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), "best_model.pt")
+            best_model_path = os.path.join(config.checkpoint_dir, "best_model.pt")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_loss': val_loss,
+                'train_loss': train_loss,
+            }, best_model_path)
             print(f"   💾 Saved best model (val_loss: {val_loss:.4f})")
+        
+        # Save checkpoint every N epochs
+        if epoch % config.checkpoint_frequency == 0:
+            checkpoint_path = os.path.join(config.checkpoint_dir, f"checkpoint_epoch_{epoch}.pt")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_loss': val_loss,
+                'train_loss': train_loss,
+            }, checkpoint_path)
+            print(f"   💾 Saved checkpoint at epoch {epoch}")
         
         print(f"   Epoch {epoch}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, time={elapsed:.1f}s")
     
@@ -205,12 +236,8 @@ def train(num_epochs=10, embed_dim=256, num_heads=8, num_layers=4,
 
 
 if __name__ == "__main__":
-    # Train with smaller model for demo
+    # Train using YAML config
     model, tokenizer = train(
-        num_epochs=100,
-        embed_dim=512,
-        num_heads=8,
-        num_layers=8,
-        learning_rate=1e-4,
+        config_path="transformer/config.yaml",
         use_sample=False
     )
