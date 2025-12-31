@@ -207,10 +207,10 @@ def train(num_epochs=10, embed_dim=256, num_heads=8, num_layers=4,
 if __name__ == "__main__":
     # Train with smaller model for demo
     model, tokenizer = train(
-        num_epochs=5,
-        embed_dim=256,
-        num_heads=4,
-        num_layers=2,
-        learning_rate=1e-3,
+        num_epochs=100,
+        embed_dim=512,
+        num_heads=8,
+        num_layers=8,
+        learning_rate=1e-4,
         use_sample=False
     )

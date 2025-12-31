@@ -134,7 +134,7 @@ def download_sample_data() -> Tuple[List[str], List[str]]:
     return chinese_sentences, english_sentences
 
 
-def download_wmt_sample(num_samples: int = 1000) -> Tuple[List[str], List[str]]:
+def download_wmt_sample(num_samples: int = 10000000) -> Tuple[List[str], List[str]]:
     """
     Download a sample from WMT translation datasets using HuggingFace datasets.
     
