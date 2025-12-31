@@ -376,8 +376,28 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
         print(f"\n✅ Model, optimizer, and dataloaders prepared with Accelerator")
     else:
         model = model.to(device)
+        
+        # Apply FP16/BF16 if requested (only on CUDA)
+        if mixed_precision == "fp16":
+            if device.type == "cuda":
+                model = model.half()
+                print(f"\n✅ Model converted to FP16")
+            else:
+                print(f"\n⚠️  FP16 is only supported on CUDA devices, ignoring mixed_precision setting")
+                mixed_precision = "no"
+        elif mixed_precision == "bf16":
+            if device.type == "cuda":
+                model = model.bfloat16()
+                print(f"\n✅ Model converted to BF16")
+            else:
+                print(f"\n⚠️  BF16 is only supported on CUDA devices, ignoring mixed_precision setting")
+                mixed_precision = "no"
+        
         # Create dummy accelerator for compatibility
         accelerator = DummyAccelerator(device)
+        
+        if mixed_precision != "no":
+            print(f"   📱 Mixed precision: {mixed_precision}")
     
     assert accelerator is not None, "Either Accelerator or DummyAccelerator must be initialized"
 
