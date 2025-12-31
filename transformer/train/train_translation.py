@@ -15,23 +15,43 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 import time
+from accelerate import Accelerator
 
 from transformer.data.dataset import create_pipeline
 from transformer.models.transformer import Transformer
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, epoch, max_len):
+class DummyAccelerator:
+    """Dummy accelerator for non-accelerate mode"""
+    def __init__(self, device):
+        self.device = device
+        self.is_local_main_process = True
+        self.is_main_process = True
+        self.sync_gradients = True
+    
+    def backward(self, loss):
+        loss.backward()
+    
+    def clip_grad_norm_(self, parameters, max_norm):
+        torch.nn.utils.clip_grad_norm_(parameters, max_norm)
+    
+    def unwrap_model(self, model):
+        return model
+    
+    def wait_for_everyone(self):
+        pass
+
+
+def train_epoch(model, dataloader, optimizer, criterion, accelerator, epoch, max_len):
     """Train for one epoch"""
     model.train()
     total_loss = 0
     num_batches = 0
     
-    progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}")
+    progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}", disable=not accelerator.is_local_main_process)
     
     for src_batch, tgt_input, tgt_output in progress_bar:
-        src_batch = src_batch.to(device)
-        tgt_input = tgt_input.to(device)
-        tgt_output = tgt_output.to(device)
+        # No need to manually move to device - accelerator handles this
 
         # Truncate long sentences
         src_len = src_batch.size(1)
@@ -51,9 +71,10 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, max_len)
         targets_flat = tgt_output.reshape(-1) # (batch_size * (tgt_len - 1))
         loss = criterion(logits_flat, targets_flat)
         
-        # Backward pass
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # Backward pass with accelerator
+        accelerator.backward(loss)
+        if accelerator.sync_gradients:
+            accelerator.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         
         total_loss += loss.item()
@@ -64,7 +85,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, max_len)
     return total_loss / num_batches
 
 
-def evaluate(model, dataloader, criterion, device, max_len):
+def evaluate(model, dataloader, criterion, accelerator, max_len):
     """Evaluate on validation set"""
     model.eval()
     total_loss = 0
@@ -72,6 +93,7 @@ def evaluate(model, dataloader, criterion, device, max_len):
     
     with torch.no_grad():
         for src_batch, tgt_input, tgt_output in dataloader:
+            # No need to manually move to device - accelerator handles this
             # Truncate long sentences
             src_len = src_batch.size(1)
             if src_len > max_len:
@@ -80,10 +102,6 @@ def evaluate(model, dataloader, criterion, device, max_len):
             if tgt_input_len > max_len:
                 tgt_input = tgt_input[:, :max_len]
                 tgt_output = tgt_output[:, :max_len]
-
-            src_batch = src_batch.to(device)
-            tgt_input = tgt_input.to(device)
-            tgt_output = tgt_output.to(device)
 
             logits = model(src_batch, tgt_input)
             
@@ -97,8 +115,21 @@ def evaluate(model, dataloader, criterion, device, max_len):
     return total_loss / max(num_batches, 1)
 
 
-def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu"):
-    """Decode using greedy search"""
+def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu", unwrap=False):
+    """Decode using greedy search
+    
+    Args:
+        model: Transformer model (might be wrapped by Accelerator)
+        src_sentence: Source sentence string
+        tokenizer: Tokenizer instance
+        max_len: Maximum decoding length
+        device: Target device
+        unwrap: Whether to unwrap model (if using Accelerator)
+    """
+    # Unwrap model if needed (for Accelerator compatibility)
+    if unwrap and hasattr(model, 'module'):
+        model = model.module
+    
     model.eval()
     
     # Tokenize and encode source
@@ -108,7 +139,7 @@ def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu"):
         src_tokens = src_tokens[:max_len]
 
     src_ids = tokenizer.src_vocab.encode(src_tokens)
-    src_tensor = torch.tensor([src_ids]).to(device)
+    src_tensor = torch.tensor([src_ids], device=device)
     
     # Get encoder output
     with torch.no_grad():
@@ -122,7 +153,7 @@ def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu"):
     
     with torch.no_grad():
         for _ in range(max_len):
-            tgt_tensor = torch.tensor([tgt_ids]).to(device)
+            tgt_tensor = torch.tensor([tgt_ids], device=device)
             output = model.decode(tgt_tensor, memory, src_tensor)
             
             next_token_logits = output[0, -1, :]
@@ -238,19 +269,34 @@ def load_model_and_translate(checkpoint_path, config_path="transformer/config.ya
     return model, tokenizer
 
 
-def train(config_path="transformer/config.yaml", use_sample=True, resume_from=None, multi_gpu=False):
+def train(config_path="transformer/config.yaml", use_sample=True, resume_from=None, use_accelerate=True, mixed_precision="no"):
     """Main training function
     
     Args:
         config_path: Path to YAML config file
         use_sample: Whether to use sample dataset
         resume_from: Path to checkpoint to resume training from (optional)
-        multi_gpu: Whether to use multiple GPUs with DataParallel (default: False)
+        use_accelerate: Whether to use Accelerate for distributed training (default: True)
+        mixed_precision: Mixed precision mode: 'no', 'fp16', 'bf16' (default: 'no')
     """
     
     print("\n" + "="*60)
     print("🎓 CHINESE-ENGLISH TRANSLATION TRAINING")
     print("="*60)
+    
+    # Initialize Accelerator
+    if use_accelerate:
+        accelerator = Accelerator(mixed_precision=mixed_precision)
+        device = accelerator.device
+        print(f"\n🚀 Using Accelerate library")
+        print(f"   ✅ Distributed type: {accelerator.distributed_type}")
+        print(f"   ✅ Number of processes: {accelerator.num_processes}")
+        print(f"   ✅ Mixed precision: {mixed_precision}")
+        print(f"   📱 Device: {device}")
+    else:
+        accelerator = None
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"\n📱 Device: {device} (not using Accelerate)")
     
     # Load config from YAML
     from transformer.data.config import TranslationConfig
@@ -269,10 +315,7 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
     # Create pipeline
     pipeline, tokenizer, _ = create_pipeline(use_sample=use_sample, config=config)
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\n📱 Device: {device}")
-    
-    # Create model
+    # Create model (don't move to device yet if using Accelerator)
     model = Transformer(
         src_vocab_size=len(tokenizer.src_vocab),
         tgt_vocab_size=len(tokenizer.tgt_vocab),
@@ -283,18 +326,7 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
         dropout=config.dropout,
         src_pad_idx=tokenizer.src_vocab.pad_idx,
         tgt_pad_idx=tokenizer.tgt_vocab.pad_idx
-    ).to(device)
-    
-    # Multi-GPU setup
-    gpu_count = torch.cuda.device_count()
-    if multi_gpu and gpu_count > 1:
-        print(f"\n🚀 Using {gpu_count} GPUs with DataParallel")
-        model = nn.DataParallel(model)
-        print(f"   ✅ Model wrapped with DataParallel")
-        print(f"   📊 GPU devices: {list(range(gpu_count))}")
-    elif multi_gpu and gpu_count <= 1:
-        print(f"\n⚠️  Multi-GPU requested but only {gpu_count} GPU(s) available")
-        print(f"   Running on single device: {device}")
+    )
     
     # Count parameters
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -304,6 +336,24 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, betas=(0.9, 0.98), eps=1e-9)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.tgt_vocab.pad_idx)
     
+    # DataLoaders
+    train_loader = pipeline.get_dataloader("train", shuffle=True)
+    val_loader = pipeline.get_dataloader("val", shuffle=False)
+    
+    # Prepare with Accelerator (or move to device manually)
+    if use_accelerate:
+        assert accelerator is not None, "Accelerator must be initialized"
+        model, optimizer, train_loader, val_loader = accelerator.prepare(
+            model, optimizer, train_loader, val_loader
+        )
+        print(f"\n✅ Model, optimizer, and dataloaders prepared with Accelerator")
+    else:
+        model = model.to(device)
+        # Create dummy accelerator for compatibility
+        accelerator = DummyAccelerator(device)
+    
+    assert accelerator is not None, "Either Accelerator or DummyAccelerator must be initialized"
+
     # Load checkpoint if resuming
     start_epoch = 1
     best_val_loss = float('inf')
@@ -311,29 +361,17 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
     if resume_from:
         if os.path.exists(resume_from):
             print(f"\n📥 Loading checkpoint from: {resume_from}")
-            checkpoint = torch.load(resume_from, map_location=device)
+            checkpoint = torch.load(resume_from, map_location="cpu")
+            
+            # Get unwrapped model for loading state dict
+            unwrapped_model = accelerator.unwrap_model(model)
             
             # Load model state
             if 'model_state_dict' in checkpoint:
-                # Handle DataParallel state dict (with 'module.' prefix)
-                state_dict = checkpoint['model_state_dict']
-                if multi_gpu and not list(state_dict.keys())[0].startswith('module.'):
-                    # Loading non-DataParallel checkpoint into DataParallel model
-                    model.module.load_state_dict(state_dict)
-                elif not multi_gpu and list(state_dict.keys())[0].startswith('module.'):
-                    # Loading DataParallel checkpoint into non-DataParallel model
-                    # Remove 'module.' prefix
-                    from collections import OrderedDict
-                    new_state_dict = OrderedDict()
-                    for k, v in state_dict.items():
-                        name = k[7:] if k.startswith('module.') else k  # remove 'module.' prefix
-                        new_state_dict[name] = v
-                    model.load_state_dict(new_state_dict)
-                else:
-                    model.load_state_dict(state_dict)
+                unwrapped_model.load_state_dict(checkpoint['model_state_dict'])
                 print(f"   ✅ Model state loaded")
             else:
-                model.load_state_dict(checkpoint)
+                unwrapped_model.load_state_dict(checkpoint)
                 print(f"   ✅ Model state loaded (old format)")
             
             # Load optimizer state
@@ -371,41 +409,45 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
         start_time = time.time()
         
         # Train
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch, config.max_len)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, accelerator, epoch, config.max_len)
         
         # Validate
-        val_loss = evaluate(model, val_loader, criterion, device, config.max_len)
+        val_loss = evaluate(model, val_loader, criterion, accelerator, config.max_len)
         
         elapsed = time.time() - start_time
         
-        # Save best model
+        # Save best model (only on main process)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_path = os.path.join(config.checkpoint_dir, "best_model.pt")
-            # Save model state (handle DataParallel wrapper)
-            model_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model_state,
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_loss': val_loss,
-                'train_loss': train_loss,
-            }, best_model_path)
-            print(f"   💾 Saved best model (val_loss: {val_loss:.4f})")
+            
+            accelerator.wait_for_everyone()
+            if accelerator.is_main_process:
+                unwrapped_model = accelerator.unwrap_model(model)
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': unwrapped_model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': val_loss,
+                    'train_loss': train_loss,
+                }, best_model_path)
+                print(f"   💾 Saved best model (val_loss: {val_loss:.4f})")
         
-        # Save checkpoint every N epochs
+        # Save checkpoint every N epochs (only on main process)
         if epoch % config.checkpoint_frequency == 0:
             checkpoint_path = os.path.join(config.checkpoint_dir, f"checkpoint_epoch_{epoch}.pt")
-            # Save model state (handle DataParallel wrapper)
-            model_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model_state,
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_loss': val_loss,
-                'train_loss': train_loss,
-            }, checkpoint_path)
-            print(f"   💾 Saved checkpoint at epoch {epoch}")
+            
+            accelerator.wait_for_everyone()
+            if accelerator.is_main_process:
+                unwrapped_model = accelerator.unwrap_model(model)
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': unwrapped_model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': val_loss,
+                    'train_loss': train_loss,
+                }, checkpoint_path)
+                print(f"   💾 Saved checkpoint at epoch {epoch}")
         
         print(f"   Epoch {epoch}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, time={elapsed:.1f}s")
     
@@ -414,13 +456,17 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
     
     # Test some translations
     print("\n" + "="*60)
-    print("🔮 SAMPLE TRANSLATIONS (untrained model produces random output)")
+    print("🔮 SAMPLE TRANSLATIONS")
     print("="*60)
     
     test_sentences = ["你好", "谢谢你", "我喜欢学习中文"]
     
+    # Get unwrapped model and correct device for inference
+    unwrapped_model = accelerator.unwrap_model(model)
+    inference_device = accelerator.device if use_accelerate else device
+    
     for src in test_sentences:
-        translation = greedy_decode(model, src, tokenizer, config.max_len, device=device)
+        translation = greedy_decode(unwrapped_model, src, tokenizer, config.max_len, device=inference_device)
         print(f"   🇨🇳 {src}")
         print(f"   🇺🇸 {translation}")
         print()
@@ -442,8 +488,10 @@ if __name__ == "__main__":
                         help='Use sample data instead of full dataset')
     parser.add_argument('--resume', action='store_true',
                         help='Resume training from checkpoint (use with --checkpoint)')
-    parser.add_argument('--multi_gpu', action='store_true',
-                        help='Use multiple GPUs with DataParallel')
+    parser.add_argument('--no_accelerate', action='store_true',
+                        help='Disable Accelerate (use single GPU only)')
+    parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'],
+                        help='Mixed precision mode: no, fp16, or bf16')
     parser.add_argument('--sentences', type=str, nargs='+',
                         help='Custom sentences to translate (for test mode)')
     
@@ -456,7 +504,8 @@ if __name__ == "__main__":
             config_path=args.config,
             use_sample=args.use_sample,
             resume_from=resume_checkpoint,
-            multi_gpu=args.multi_gpu
+            use_accelerate=not args.no_accelerate,
+            mixed_precision=args.mixed_precision
         )
     else:
         # Test mode - load and translate
