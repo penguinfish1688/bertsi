@@ -145,46 +145,50 @@ class TestDataset(unittest.TestCase):
         from transformer.data.dataset import TranslationDataset
         
         src_data = [[1, 2, 3], [4, 5, 6, 7]]
-        tgt_data = [[10, 11, 12], [13, 14, 15, 16]]
+        tgt_input_data = [[10, 11], [13, 14, 15]]  # Target input (with BOS, without last token)
+        tgt_output_data = [[11, 12], [14, 15, 16]]  # Target output (without BOS, with EOS)
         
-        dataset = TranslationDataset(src_data, tgt_data)
+        dataset = TranslationDataset(src_data, tgt_input_data, tgt_output_data)
         
         print(f"\n📦 Dataset test:")
         print(f"   Dataset size: {len(dataset)}")
         
         self.assertEqual(len(dataset), 2)
         
-        src, tgt = dataset[0]
+        src, tgt_in, tgt_out = dataset[0]
         self.assertEqual(src, [1, 2, 3])
-        self.assertEqual(tgt, [10, 11, 12])
+        self.assertEqual(tgt_in, [10, 11])
+        self.assertEqual(tgt_out, [11, 12])
     
     def test_collate_fn(self):
         """Test batch collation with padding"""
         from transformer.data.dataset import collate_fn
         
         batch = [
-            ([1, 2, 3], [10, 11]),
-            ([4, 5], [12, 13, 14]),
-            ([6, 7, 8, 9], [15, 16])
+            ([1, 2, 3], [10, 11], [11, 12]),
+            ([4, 5], [12, 13], [13, 14, 15]),
+            ([6, 7, 8, 9], [15], [16, 17])
         ]
         
-        src_batch, tgt_batch = collate_fn(batch, src_pad_idx=0, tgt_pad_idx=0)
+        src_batch, tgt_input_batch, tgt_output_batch = collate_fn(batch, src_pad_idx=0, tgt_pad_idx=0)
         
         print(f"\n📦 Collate function test:")
         print(f"   Source batch shape: {src_batch.shape}")
-        print(f"   Target batch shape: {tgt_batch.shape}")
+        print(f"   Target input batch shape: {tgt_input_batch.shape}")
+        print(f"   Target output batch shape: {tgt_output_batch.shape}")
         print(f"   Source batch:\n{src_batch}")
-        print(f"   Target batch:\n{tgt_batch}")
+        print(f"   Target input batch:\n{tgt_input_batch}")
+        print(f"   Target output batch:\n{tgt_output_batch}")
         
         # Check shapes
         self.assertEqual(src_batch.shape[0], 3)  # Batch size
         self.assertEqual(src_batch.shape[1], 4)  # Max src length
-        self.assertEqual(tgt_batch.shape[0], 3)
-        self.assertEqual(tgt_batch.shape[1], 3)  # Max tgt length
+        self.assertEqual(tgt_input_batch.shape[0], 3)
+        self.assertEqual(tgt_output_batch.shape[0], 3)
         
         # Check padding
         self.assertEqual(src_batch[1, 2].item(), 0)  # Padded
-        self.assertEqual(tgt_batch[0, 2].item(), 0)  # Padded
+        self.assertEqual(tgt_output_batch[0, 2].item(), 0)  # Padded
 
 
 class TestDataPipeline(unittest.TestCase):
@@ -216,13 +220,15 @@ class TestDataPipeline(unittest.TestCase):
         print(f"\n📦 DataLoader test:")
         
         batch_count = 0
-        for src_batch, tgt_batch in train_loader:
+        for src_batch, tgt_input_batch, tgt_output_batch in train_loader:
             print(f"   Batch {batch_count + 1}:")
             print(f"      Source shape: {src_batch.shape}")
-            print(f"      Target shape: {tgt_batch.shape}")
+            print(f"      Target input shape: {tgt_input_batch.shape}")
+            print(f"      Target output shape: {tgt_output_batch.shape}")
             
             self.assertEqual(src_batch.dim(), 2)  # (batch, seq_len)
-            self.assertEqual(tgt_batch.dim(), 2)
+            self.assertEqual(tgt_input_batch.dim(), 2)
+            self.assertEqual(tgt_output_batch.dim(), 2)
             
             batch_count += 1
             if batch_count >= 2:
@@ -264,16 +270,17 @@ class TestModelIntegration(unittest.TestCase):
         print(f"      Num heads: {config.num_heads}")
         
         # Get a batch
-        src_batch, tgt_batch = pipeline.get_sample_batch()
+        src_batch, tgt_input_batch, tgt_output_batch = pipeline.get_sample_batch()
         
         print(f"\n   Input shapes:")
         print(f"      Source: {src_batch.shape}")
-        print(f"      Target: {tgt_batch.shape}")
+        print(f"      Target input: {tgt_input_batch.shape}")
+        print(f"      Target output: {tgt_output_batch.shape}")
         
         # Forward pass
         model.eval()
         with torch.no_grad():
-            output = model(src_batch, tgt_batch)
+            output = model(src_batch, tgt_input_batch)
         
         print(f"\n   Output shape: {output.shape}")
         print(f"   Expected: (batch_size, tgt_len, tgt_vocab_size)")
@@ -281,7 +288,7 @@ class TestModelIntegration(unittest.TestCase):
         
         # Verify output shape
         self.assertEqual(output.shape[0], src_batch.shape[0])  # Batch size
-        self.assertEqual(output.shape[1], tgt_batch.shape[1])  # Target sequence length
+        self.assertEqual(output.shape[1], tgt_input_batch.shape[1])  # Target sequence length
         self.assertEqual(output.shape[2], len(tokenizer.tgt_vocab))  # Vocab size
         
         print(f"\n   ✅ Model forward pass successful!")
@@ -311,27 +318,22 @@ class TestModelIntegration(unittest.TestCase):
         )
         
         # Get a batch
-        src_batch, tgt_batch = pipeline.get_sample_batch()
+        src_batch, tgt_input_batch, tgt_output_batch = pipeline.get_sample_batch()
         
-        # Create inputs and targets
-        # Input to decoder: all tokens except last
-        # Target: all tokens except first (shifted by 1)
-        tgt_input = tgt_batch[:, :-1]
-        tgt_output = tgt_batch[:, 1:]
-        
-        print(f"   Target input shape: {tgt_input.shape}")
-        print(f"   Target output shape: {tgt_output.shape}")
+        print(f"   Source shape: {src_batch.shape}")
+        print(f"   Target input shape: {tgt_input_batch.shape}")
+        print(f"   Target output shape: {tgt_output_batch.shape}")
         
         # Forward pass
         model.train()
-        logits = model(src_batch, tgt_input)
+        logits = model(src_batch, tgt_input_batch)
         
         # Compute loss
         criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.tgt_vocab.pad_idx)
         
         # Reshape for loss: (batch * seq_len, vocab_size) vs (batch * seq_len)
         logits_flat = logits.reshape(-1, logits.shape[-1])
-        targets_flat = tgt_output.reshape(-1)
+        targets_flat = tgt_output_batch.reshape(-1)
         
         loss = criterion(logits_flat, targets_flat)
         

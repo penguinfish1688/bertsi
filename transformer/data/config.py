@@ -29,8 +29,7 @@ class TranslationConfig:
     # Data
     min_freq: int = 2  # Minimum word frequency to include in vocabulary
     max_samples: Optional[int] = None  # Limit samples for testing (None = all)
-    use_cached_dataset: bool = False  # If true, load from cached dataset
-    download_new: bool = False  # If true, always download new data from online
+    download_new: bool = False  # If true, download and replace dataset; if false, use existing if found
     cache_dir: str = "data/translation/cache"
     
     # Tokenization
@@ -81,7 +80,6 @@ class TranslationConfig:
             data_config = config_dict['data']
             flat_config['min_freq'] = data_config.get('min_freq', 2)
             flat_config['max_samples'] = data_config.get('max_samples')
-            flat_config['use_cached_dataset'] = data_config.get('use_cached_dataset', False)
             flat_config['download_new'] = data_config.get('download_new', False)
             flat_config['cache_dir'] = data_config.get('cache_dir', 'data/translation/cache')
         

@@ -245,10 +245,10 @@ class TranslationDataPipeline:
         self.test_dataset = None
     
     def _get_cache_path(self, use_sample: bool, train_ratio: float = 0.8, val_ratio: float = 0.1) -> str:
-        """Generate cache file path based on config"""
-        cache_key = f"sample_{use_sample}_freq_{self.config.min_freq}_train_{train_ratio}_val_{val_ratio}"
-        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
-        return os.path.join(self.config.cache_dir, f"dataset_{cache_hash}.pkl")
+        """Generate cache file path based on config using real dataset name"""
+        dataset_type = "sample" if use_sample else f"wmt_{self.config.max_samples or 'full'}"
+        cache_filename = f"dataset_{dataset_type}_freq{self.config.min_freq}_train{train_ratio}_val{val_ratio}.pkl"
+        return os.path.join(self.config.cache_dir, cache_filename)
     
     def _save_cache(self, data: Dict, cache_path: str):
         """Save processed dataset to cache"""
@@ -296,8 +296,7 @@ class TranslationDataPipeline:
         
         return src_sentences, tgt_sentences
     
-    def prepare_data(self, src_sentences: List[str], tgt_sentences: List[str],
-                    train_ratio: float = 0.8, val_ratio: float = 0.1, use_sample: bool = True) -> Dict:
+    def prepare_data(self, train_ratio: float = 0.8, val_ratio: float = 0.1, use_sample: bool = True) -> Dict:
         """
         Prepare data: tokenize, build vocab, split, and create datasets
         
@@ -318,7 +317,8 @@ class TranslationDataPipeline:
         # Check if we should use cached dataset
         cache_path = self._get_cache_path(use_sample, train_ratio, val_ratio)
         
-        if self.config.use_cached_dataset and not self.config.download_new:
+        # If download_new is False, try to load existing cache
+        if not self.config.download_new:
             cached_data = self._load_cache(cache_path)
             if cached_data is not None:
                 # Restore vocabularies
@@ -343,7 +343,7 @@ class TranslationDataPipeline:
                 )
                 
                 print("\n" + "="*60)
-                print("✅ DATA LOADED FROM CACHE")
+                print(f"✅ DATA LOADED FROM CACHE: {os.path.basename(cache_path)}")
                 print("="*60)
                 
                 return {
@@ -353,8 +353,16 @@ class TranslationDataPipeline:
                     "src_vocab_size": len(self.tokenizer.src_vocab),
                     "tgt_vocab_size": len(self.tokenizer.tgt_vocab),
                 }
+            else:
+                print(f"\n📥 No cached dataset found at {cache_path}")
+                print(f"   Downloading and creating new dataset...")
         
         # Process data from scratch
+        # Step 0: Download data
+        print("Downloading data...")
+        src_sentences, tgt_sentences = self.load_data(use_sample=use_sample)
+        print(f"   ✅ Loaded {len(src_sentences)} sentence pairs")
+
         # Step 1: Build vocabularies (includes tokenization with jieba)
         src_tokenized, tgt_tokenized = self.tokenizer.build_vocabularies(
             src_sentences, tgt_sentences, 
@@ -515,8 +523,7 @@ def create_pipeline(use_sample: bool = True, config=None):
     pipeline = TranslationDataPipeline(tokenizer, config)
     
     # Load and prepare data
-    src_sentences, tgt_sentences = pipeline.load_data(use_sample=use_sample)
-    info = pipeline.prepare_data(src_sentences, tgt_sentences, use_sample=use_sample)
+    info = pipeline.prepare_data(use_sample=use_sample)
     
     print("\n" + "="*60)
     print("📋 PIPELINE SUMMARY")

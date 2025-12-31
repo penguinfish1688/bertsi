@@ -335,7 +335,6 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
     print(f"   - Batch size: {config.batch_size}")
     print(f"   - Learning rate: {config.learning_rate}")
     print(f"   - Checkpoint frequency: {config.checkpoint_frequency}")
-    print(f"   - Use cached dataset: {config.use_cached_dataset}")
     print(f"   - Download new data: {config.download_new}")
     if resume_from:
         print(f"   - Resume from: {resume_from}")
