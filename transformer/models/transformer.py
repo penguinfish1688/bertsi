@@ -119,6 +119,7 @@ class Transformer(nn.Module):
         self.num_heads = num_heads
         self.src_pad_idx = src_pad_idx
         self.tgt_pad_idx = tgt_pad_idx
+        self.max_len = max_len
         
         # Embedding layers for source and target
         self.src_embedding = TransformerEmbedding(src_vocab_size, embed_dim, max_len, dropout, src_pad_idx)

@@ -64,7 +64,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, max_len)
     return total_loss / num_batches
 
 
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, max_len):
     """Evaluate on validation set"""
     model.eval()
     total_loss = 0
@@ -72,10 +72,19 @@ def evaluate(model, dataloader, criterion, device):
     
     with torch.no_grad():
         for src_batch, tgt_input, tgt_output in dataloader:
+            # Truncate long sentences
+            src_len = src_batch.size(1)
+            if src_len > max_len:
+                src_batch = src_batch[:, :max_len]
+            tgt_input_len = tgt_input.size(1)
+            if tgt_input_len > max_len:
+                tgt_input = tgt_input[:, :max_len]
+                tgt_output = tgt_output[:, :max_len]
+
             src_batch = src_batch.to(device)
             tgt_input = tgt_input.to(device)
             tgt_output = tgt_output.to(device)
-            
+
             logits = model(src_batch, tgt_input)
             
             logits_flat = logits.reshape(-1, logits.shape[-1])
@@ -88,12 +97,16 @@ def evaluate(model, dataloader, criterion, device):
     return total_loss / max(num_batches, 1)
 
 
-def greedy_decode(model, src_sentence, tokenizer, max_len=50, device="cpu"):
+def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu"):
     """Decode using greedy search"""
     model.eval()
     
     # Tokenize and encode source
     src_tokens = tokenizer.tokenize_source(src_sentence)
+    
+    if len(src_tokens) > max_len:
+        src_tokens = src_tokens[:max_len]
+
     src_ids = tokenizer.src_vocab.encode(src_tokens)
     src_tensor = torch.tensor([src_ids]).to(device)
     
