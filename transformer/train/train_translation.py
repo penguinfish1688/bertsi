@@ -202,7 +202,7 @@ def train(config_path="transformer/config.yaml", use_sample=True):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch, config.max_len)
         
         # Validate
-        val_loss = evaluate(model, val_loader, criterion, device)
+        val_loss = evaluate(model, val_loader, criterion, device, config.max_len)
         
         elapsed = time.time() - start_time
         
@@ -244,7 +244,7 @@ def train(config_path="transformer/config.yaml", use_sample=True):
     test_sentences = ["你好", "谢谢你", "我喜欢学习中文"]
     
     for src in test_sentences:
-        translation = greedy_decode(model, src, tokenizer, device=device)
+        translation = greedy_decode(model, src, tokenizer, config.max_len, device=device)
         print(f"   🇨🇳 {src}")
         print(f"   🇺🇸 {translation}")
         print()
