@@ -269,13 +269,41 @@ def load_model_and_translate(checkpoint_path, config_path="transformer/config.ya
     return model, tokenizer
 
 
+def get_latest_checkpoint(checkpoint_dir):
+    """Find the latest checkpoint in the checkpoint directory
+    
+    Args:
+        checkpoint_dir: Directory containing checkpoint files
+        
+    Returns:
+        Path to the latest checkpoint file, or None if no checkpoints found
+    """
+    if not os.path.exists(checkpoint_dir):
+        return None
+    
+    # Get all .pt files in the checkpoint directory
+    checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.pt')]
+    
+    if not checkpoint_files:
+        return None
+    
+    # Get full paths and modification times
+    checkpoint_paths = [os.path.join(checkpoint_dir, f) for f in checkpoint_files]
+    
+    # Sort by modification time (most recent first)
+    latest_checkpoint = max(checkpoint_paths, key=os.path.getmtime)
+    
+    return latest_checkpoint
+
+
 def train(config_path="transformer/config.yaml", use_sample=True, resume_from=None, use_accelerate=True, mixed_precision="no"):
     """Main training function
     
     Args:
         config_path: Path to YAML config file
         use_sample: Whether to use sample dataset
-        resume_from: Path to checkpoint to resume training from (optional)
+        resume_from: Path to checkpoint to resume training from (optional). 
+                    Use 'latest' to automatically load the most recent checkpoint from the checkpoints directory.
         use_accelerate: Whether to use Accelerate for distributed training (default: True)
         mixed_precision: Mixed precision mode: 'no', 'fp16', 'bf16' (default: 'no')
     """
@@ -359,6 +387,17 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
     best_val_loss = float('inf')
     
     if resume_from:
+        # Handle 'latest' keyword for resume_from
+        if resume_from == "latest":
+            latest_checkpoint = get_latest_checkpoint(config.checkpoint_dir)
+            if latest_checkpoint:
+                resume_from = latest_checkpoint
+                print(f"\n🔍 'latest' keyword detected - found: {resume_from}")
+            else:
+                print(f"\n⚠️  'latest' keyword used but no checkpoints found in {config.checkpoint_dir}")
+                print(f"   Starting training from scratch...")
+                resume_from = ""
+
         if os.path.exists(resume_from):
             print(f"\n📥 Loading checkpoint from: {resume_from}")
             checkpoint = torch.load(resume_from, map_location="cpu")
