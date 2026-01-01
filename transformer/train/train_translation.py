@@ -139,7 +139,7 @@ def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu", unwrap=
         src_tokens = src_tokens[:max_len]
 
     src_ids = tokenizer.src_vocab.encode(src_tokens)
-    src_tensor = torch.tensor([src_ids], device=device)
+    src_tensor = torch.tensor([src_ids], device=device) # (1, src_len)
     
     # Get encoder output
     with torch.no_grad():
