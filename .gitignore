@@ -15,3 +15,6 @@ best_model.pt
 *.pyc
 *.pkl
 *.pt
+
+# Ensure specific compiled files in repository paths are untracked
+transformer/models/__pycache__/
