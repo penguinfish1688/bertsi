@@ -9,6 +9,7 @@ import re
 from typing import List, Dict, Optional, Tuple
 from collections import Counter
 import sentencepiece as spm
+from transformer.data.config import TranslationConfig
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
@@ -378,7 +379,7 @@ class TranslationTokenizer:
     Uses SentencePiece for Chinese and BPE for English
     """
     
-    def __init__(self, config=None,
+    def __init__(self, config: "TranslationConfig",
                  chinese_vocab_size: int = 16000,
                  english_vocab_size: int = 16000):
         """
@@ -391,6 +392,7 @@ class TranslationTokenizer:
             chinese_vocab_size: Vocabulary size for Chinese (default: 8000)
             english_vocab_size: Vocabulary size for English (default: 10000)
         """
+        self.config = config
         self.chinese_model_path = config.chinese_model_path
         self.english_model_path = config.english_model_path
         self.chinese_tokenizer = ChineseTokenizer(
@@ -398,22 +400,18 @@ class TranslationTokenizer:
             vocab_size=chinese_vocab_size
         )
         self.english_tokenizer = EnglishTokenizer(
-            vocab_size=english_vocab_size,
-            model_path=config.english_model_path
+            model_path=config.english_model_path,
+            vocab_size=english_vocab_size
         )
-        
-        if config:
-            self.src_vocab = Vocabulary(
-                config.pad_token, config.unk_token,
-                config.bos_token, config.eos_token
-            )
-            self.tgt_vocab = Vocabulary(
-                config.pad_token, config.unk_token,
-                config.bos_token, config.eos_token
-            )
-        else:
-            self.src_vocab = Vocabulary()
-            self.tgt_vocab = Vocabulary()
+
+        self.src_vocab = Vocabulary(
+            config.pad_token, config.unk_token,
+            config.bos_token, config.eos_token
+        )
+        self.tgt_vocab = Vocabulary(
+            config.pad_token, config.unk_token,
+            config.bos_token, config.eos_token
+        )
     
     def tokenize_source(self, text: str) -> List[str]:
         """Tokenize Chinese source text"""
@@ -517,9 +515,9 @@ class TranslationTokenizer:
         self.tgt_vocab.save(os.path.join(directory, "tgt_vocab.json"))
     
     @classmethod
-    def load(cls, directory: str) -> "TranslationTokenizer":
+    def load(cls, directory: str, config: "TranslationConfig") -> "TranslationTokenizer":
         """Load tokenizer with saved vocabularies"""
-        tokenizer = cls()
+        tokenizer = cls(config)
         tokenizer.src_vocab = Vocabulary.load(os.path.join(directory, "src_vocab.json"))
         tokenizer.tgt_vocab = Vocabulary.load(os.path.join(directory, "tgt_vocab.json"))
         return tokenizer
