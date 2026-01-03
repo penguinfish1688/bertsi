@@ -366,7 +366,9 @@ class TranslationDataPipeline:
         # Step 1: Build vocabularies (includes tokenization with jieba)
         src_tokenized, tgt_tokenized = self.tokenizer.build_vocabularies(
             src_sentences, tgt_sentences, 
-            min_freq=self.config.min_freq
+            min_freq=self.config.min_freq,
+            rebuild_chinese_model=self.config.rebuild_chinese_tokenizer,
+            rebuild_english_model=self.config.rebuild_english_tokenizer
         )
         
         # Step 2: Encode all sentences

@@ -548,7 +548,7 @@ if __name__ == "__main__":
                         help='Mixed precision mode: no, fp16, or bf16')
     parser.add_argument('--sentences', type=str, nargs='+',
                         help='Custom sentences to translate (for test mode)')
-    
+
     args = parser.parse_args()
     
     if args.mode == 'train':

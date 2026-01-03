@@ -16,5 +16,10 @@ best_model.pt
 *.pkl
 *.pt
 
+# Model for tokenizers
+chinese_sp.model
+chinese_sp.vocab
+english_bpe.json
+
 # Ensure specific compiled files in repository paths are untracked
 transformer/models/__pycache__/

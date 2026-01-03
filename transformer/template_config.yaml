@@ -1,0 +1,41 @@
+# Configuration for Chinese-English Translation
+# Model Architecture
+model:
+  embed_dim: 512
+  num_heads: 8
+  num_layers: 8
+  max_len: 512
+  dropout: 0.1
+
+# Training Parameters
+training:
+  batch_size: 64
+  learning_rate: 0.0001
+  num_epochs: 20
+  warmup_steps: 4000
+  checkpoint_frequency: 1  # Save checkpoint every N epochs
+
+# Data Configuration
+data:
+  min_freq: 2  # Minimum word frequency to include in vocabulary
+  max_samples: 5000000  # Limit samples for testing
+  download_new: false  # If true, always download new data from online
+
+# Tokenization
+tokenization:
+  src_lang: "zh"  # Chinese
+  tgt_lang: "en"  # English
+  pad_token: "<pad>"
+  unk_token: "<unk>"
+  bos_token: "<bos>"  # Beginning of sentence
+  eos_token: "<eos>"  # End of sentence
+  chinese_model_path: "chinese_sp.model"
+  english_model_path: "english_bpe.json"
+  rebuild_chinese_tokenizer: false  # Whether to rebuild Chinese tokenizer
+  rebuild_english_tokenizer: false  # Whether to rebuild English tokenizer
+
+# Paths
+paths:
+  data_dir: "data/translation"
+  checkpoint_dir: "checkpoints"
+  cache_dir: "data/translation/cache"

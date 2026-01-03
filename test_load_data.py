@@ -1,4 +1,0 @@
-from transformer.data.dataset import download_wmt_sample
-from transformer.train.train_translation import load_model_and_translate
-
-load_model_and_translate()

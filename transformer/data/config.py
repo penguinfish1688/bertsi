@@ -35,12 +35,18 @@ class TranslationConfig:
     # Tokenization
     src_lang: str = "zh"  # Chinese
     tgt_lang: str = "en"  # English
+    rebuild_chinese_tokenizer: bool = False  # Whether to rebuild Chinese tokenizer
+    rebuild_english_tokenizer: bool = False  # Whether to rebuild English tokenizer
     
     # Special tokens
     pad_token: str = "<pad>"
     unk_token: str = "<unk>"
     bos_token: str = "<bos>"  # Beginning of sentence
     eos_token: str = "<eos>"  # End of sentence
+    chinese_model_path: str = "chinese_sp.model"
+    english_model_path: str = "english_bpe.json"
+    rebuild_chinese_tokenizer: bool = True  # Whether to rebuild Chinese tokenizer
+    rebuild_english_tokenizer: bool = True  # Whether to rebuild English tokenizer
     
     # Device
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
