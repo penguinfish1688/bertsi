@@ -154,7 +154,7 @@ def download_wmt_sample(num_samples: int = 1000) -> Tuple[List[str], List[str]]:
     - OpenSubtitles
     - OPUS (Open Parallel Corpus)
     
-    This function downloads from OPUS-100 dataset (en-zh pairs).
+    This function downloads from WMT19 dataset (zh-en pairs).
     Falls back to sample data if download fails.
     
     Args:
@@ -178,26 +178,24 @@ def download_wmt_sample(num_samples: int = 1000) -> Tuple[List[str], List[str]]:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "datasets"])
             from datasets import load_dataset
         
-        print("📦 Loading OPUS-100 Chinese-English dataset...")
+        print("📦 Loading WMT19 Chinese-English dataset...")
         print(f"   Requesting {num_samples} samples...")
         
-        # Load OPUS-100 dataset for Chinese-English
-        # This is a high-quality parallel corpus from OPUS
-        dataset = load_dataset("opus100", "en-zh", split="train", trust_remote_code=True)
+        # Load WMT19 dataset for Chinese-English (zh-en)
+        # Using streaming=True for faster access without downloading full dataset
+        dataset = load_dataset("wmt/wmt19", "zh-en", split="train", streaming=True)
         
-        print(f"✅ Loaded dataset with {len(dataset)} total pairs")
-        
-        # Extract samples
-        num_samples = min(num_samples, len(dataset))
-        
+        # Extract samples using streaming
         chinese_sentences = []
         english_sentences = []
         
-        for i in range(num_samples):
-            item = dataset[i]
+        for idx, item in enumerate(dataset):
+            if idx >= num_samples:
+                break
+            
             translation = item['translation']
             
-            # OPUS-100 format: {'en': '...', 'zh': '...'}
+            # WMT format: {'en': '...', 'zh': '...'}
             en_text = translation['en']
             zh_text = translation['zh']
             
@@ -223,7 +221,6 @@ def download_wmt_sample(num_samples: int = 1000) -> Tuple[List[str], List[str]]:
         print(f"\n⚠️  Failed to download WMT dataset: {e}")
         print("📝 Falling back to sample data...")
         print("="*60)
-        return download_sample_data()
 
 
 class TranslationDataPipeline:
