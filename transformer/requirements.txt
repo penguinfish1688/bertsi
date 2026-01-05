@@ -5,3 +5,4 @@ tqdm>=4.60.0
 accelerate>=0.20.0
 sentencepiece>=0.1.99
 tokenizers>=0.13.0
+transformers>=4.30.0

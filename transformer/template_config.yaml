@@ -18,7 +18,7 @@ training:
 # Data Configuration
 data:
   min_freq: 2  # Minimum word frequency to include in vocabulary
-  max_samples: 5000000  # Limit samples for testing
+  max_samples: 50  # Limit samples for testing
   download_new: true  # If true, always download new data from online and create new dataset
 
 # Tokenization
@@ -30,9 +30,7 @@ tokenization:
   bos_token: "<bos>"  # Beginning of sentence
   eos_token: "<eos>"  # End of sentence
   chinese_model_path: "chinese_sp.model"
-  english_model_path: "english_bpe.json"
   rebuild_chinese_tokenizer: false  # Whether to rebuild Chinese tokenizer
-  rebuild_english_tokenizer: false  # Whether to rebuild English tokenizer
 
 # Paths
 paths:

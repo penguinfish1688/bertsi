@@ -3,18 +3,13 @@ Tokenizer for Chinese-English Translation
 
 This module provides tokenizers for both Chinese and English text.
 - Chinese: Uses SentencePiece for subword tokenization
-- English: Uses Byte Pair Encoding (BPE) via tokenizers library
+- English: Uses GPT-2 style BPE via transformers library (fully reversible)
 """
 import re
 from typing import List, Dict, Optional, Tuple
 from collections import Counter
 import sentencepiece as spm
 from transformer.data.config import TranslationConfig
-from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Whitespace
-from tokenizers.normalizers import Lowercase, Sequence
 import json
 import os
 import tempfile
@@ -124,91 +119,91 @@ class ChineseTokenizer:
 
 class EnglishTokenizer:
     """
-    English tokenizer using Byte Pair Encoding (BPE)
+    English tokenizer using GPT-2 style BPE (fully reversible).
+    
+    Uses HuggingFace transformers GPT2TokenizerFast which:
+    - Preserves spaces and capitalization
+    - Is fully reversible (tokenize -> detokenize gives original text)
+    - Uses byte-level BPE for handling any text
     """
     
-    def __init__(self, model_path: Optional[str] = None, vocab_size: int = 16000):
+    def __init__(self, model_path: Optional[str] = None):
         """
-        Initialize BPE tokenizer for English
+        Initialize GPT-2 style BPE tokenizer for English.
+        
+        By default, loads the official GPT-2 tokenizer from HuggingFace.
         
         Args:
-            vocab_size: Vocabulary size for BPE (default: 16000)
-            model_path: Path to saved tokenizer (optional)
+            model_path: Path to saved tokenizer directory, or 'gpt2' for official.
+                        If None, loads official GPT-2 tokenizer.
         """
-        self.vocab_size = vocab_size
         self.tokenizer = None
         self.model_path = model_path
         
         try:
-            self.Tokenizer = Tokenizer
-            self.BPE = BPE
-            self.BpeTrainer = BpeTrainer
-            self.Whitespace = Whitespace
-            self.Lowercase = Lowercase
-            self.Sequence = Sequence
+            from transformers import GPT2TokenizerFast
+            self.GPT2TokenizerFast = GPT2TokenizerFast
             
-            if model_path and os.path.exists(model_path):
-                self.tokenizer = Tokenizer.from_file(model_path)
-                print(f"✅ Loaded BPE tokenizer from {model_path}")
+            # Load tokenizer
+            load_path = model_path if model_path else 'gpt2'
+            self.tokenizer = GPT2TokenizerFast.from_pretrained(load_path)
+            self._add_special_tokens()
+            self.model_path = load_path
+            print(f"✅ Loaded GPT-2 tokenizer from {load_path} (vocab_size={self.vocab_size})")
         except ImportError:
-            print("⚠️  tokenizers not installed. Install with: pip install tokenizers")
+            print("⚠️  transformers not installed. Install with: pip install transformers")
+            self.GPT2TokenizerFast = None
     
-    def load_model(self, model_path: str):
+    @property
+    def vocab_size(self) -> int:
+        """Return the actual vocabulary size of the loaded tokenizer."""
+        if self.tokenizer is None:
+            return 0
+        return len(self.tokenizer)
+    
+    def _add_special_tokens(self):
+        """Add special tokens if not present."""
+        if self.tokenizer is None:
+            return
+        
+        special_tokens = {
+            'pad_token': '<pad>',
+            'bos_token': '<bos>',
+            'eos_token': '<eos>',
+            'unk_token': '<unk>'
+        }
+        
+        # Only add tokens that aren't already present
+        tokens_to_add = {}
+        for key, value in special_tokens.items():
+            if getattr(self.tokenizer, key, None) is None:
+                tokens_to_add[key] = value
+        
+        if tokens_to_add:
+            self.tokenizer.add_special_tokens(tokens_to_add)
+    
+    def load_model(self, model_path: str='gpt2'):
         """
-        Load a pre-trained BPE tokenizer
+        Load a pre-trained GPT-2 style tokenizer.
+        
+        Use 'gpt2' as model_path to load the official GPT-2 tokenizer.
         
         Args:
-            model_path: Path to the BPE tokenizer file
+            model_path: Path to the tokenizer directory, or 'gpt2' for official tokenizer
         """
-        self.tokenizer = Tokenizer.from_file(model_path)
+        if self.GPT2TokenizerFast is None:
+            raise ImportError("transformers library not installed")
+        
+        self.tokenizer = self.GPT2TokenizerFast.from_pretrained(model_path)
+        self._add_special_tokens()
         self.model_path = model_path
-        print(f"✅ Loaded BPE tokenizer from {model_path}")
-    
-    def train(self, sentences: List[str], save_path: Optional[str] = None):
-        """
-        Train BPE tokenizer on English sentences
-        
-        Args:
-            sentences: List of English sentences
-            save_path: Path to save the trained tokenizer
-        """
-        if not hasattr(self, 'Tokenizer') or self.Tokenizer is None:
-            raise ImportError("tokenizers library not installed")
-
-        # Initialize BPE tokenizer
-        self.tokenizer = self.Tokenizer(self.BPE(unk_token="<unk>"))
-        
-        # Set up normalizer (lowercase) and pre-tokenizer (whitespace)
-        self.tokenizer.normalizer = self.Lowercase() # type: ignore[reportAttributeAccessIssue]
-        self.tokenizer.pre_tokenizer = self.Whitespace() # type: ignore[reportAttributeAccessIssue]
-        
-        # Set up trainer
-        trainer = self.BpeTrainer(
-            vocab_size=self.vocab_size,
-            special_tokens=["<pad>", "<unk>", "<bos>", "<eos>"]
-        )
-        
-        # Write sentences to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, suffix='.txt') as f:
-            temp_file = f.name
-            for sent in sentences:
-                f.write(sent + '\n')
-        
-        try:
-            print(f"🔧 Training BPE tokenizer with vocab_size={self.vocab_size}...")
-            self.tokenizer.train([temp_file], trainer)
-            print(f"✅ BPE tokenizer trained successfully")
-            
-            if save_path:
-                self.tokenizer.save(save_path)
-                self.model_path = save_path
-                print(f"💾 BPE tokenizer saved to {save_path}")
-        finally:
-            os.unlink(temp_file)
+        print(f"✅ Loaded GPT-2 tokenizer from {model_path} (vocab_size={self.vocab_size})")
     
     def tokenize(self, text: str) -> List[str]:
         """
-        Tokenize English text using BPE
+        Tokenize English text using GPT-2 style BPE.
+        
+        Preserves spaces and capitalization for full reversibility.
         
         Args:
             text: English text string
@@ -216,13 +211,59 @@ class EnglishTokenizer:
             List of BPE tokens
         """
         if self.tokenizer is None:
-            # Fallback: basic tokenization
-            print("⚠️  BPE tokenizer not trained, using basic tokenization")
-            raise NotImplementedError("Basic tokenization not implemented")
+            raise NotImplementedError("GPT-2 tokenizer not loaded")
         
-        # Use BPE tokenizer
-        encoding = self.tokenizer.encode(text)
-        return encoding.tokens
+        return self.tokenizer.tokenize(text)
+    
+    def detokenize(self, tokens: List[str]) -> str:
+        """
+        Reconstruct original text from BPE tokens.
+        
+        This is fully reversible - returns exact original text including
+        spaces and capitalization.
+        
+        Args:
+            tokens: List of BPE tokens from tokenize()
+        Returns:
+            Original text string
+        """
+        if not tokens:
+            return ""
+        
+        if self.tokenizer is None:
+            raise NotImplementedError("GPT-2 tokenizer not loaded")
+        
+        token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        return self.tokenizer.decode(token_ids, skip_special_tokens=False)
+    
+    def encode(self, text: str) -> List[int]:
+        """
+        Encode text to token IDs.
+        
+        Args:
+            text: English text string
+        Returns:
+            List of token IDs
+        """
+        if self.tokenizer is None:
+            raise NotImplementedError("GPT-2 tokenizer not loaded")
+        
+        return self.tokenizer.encode(text, add_special_tokens=False)
+    
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> str:
+        """
+        Decode token IDs back to text.
+        
+        Args:
+            token_ids: List of token IDs
+            skip_special_tokens: Whether to skip special tokens in output
+        Returns:
+            Decoded text string
+        """
+        if self.tokenizer is None:
+            raise NotImplementedError("GPT-2 tokenizer not loaded")
+        
+        return self.tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
 
 
 class Vocabulary:
@@ -380,8 +421,7 @@ class TranslationTokenizer:
     """
     
     def __init__(self, config: "TranslationConfig",
-                 chinese_vocab_size: int = 16000,
-                 english_vocab_size: int = 16000):
+                 chinese_vocab_size: int = 16000):
         """
         Initialize translation tokenizer
         
@@ -394,15 +434,11 @@ class TranslationTokenizer:
         """
         self.config = config
         self.chinese_model_path = config.chinese_model_path
-        self.english_model_path = config.english_model_path
         self.chinese_tokenizer = ChineseTokenizer(
             model_path=config.chinese_model_path,
             vocab_size=chinese_vocab_size
         )
-        self.english_tokenizer = EnglishTokenizer(
-            model_path=config.english_model_path,
-            vocab_size=english_vocab_size
-        )
+        self.english_tokenizer = EnglishTokenizer()
 
         self.src_vocab = Vocabulary(
             config.pad_token, config.unk_token,
@@ -424,9 +460,7 @@ class TranslationTokenizer:
     def build_vocabularies(self, src_sentences: List[str], tgt_sentences: List[str], 
                           min_freq: int = 2,
                           chinese_model_prefix: str = "chinese_sp",
-                          rebuild_chinese_model: bool = False,
-                          english_model_path: str = "english_bpe.json",
-                          rebuild_english_model: bool = False) -> Tuple[List[List[str]], List[List[str]]]:
+                          rebuild_chinese_model: bool = False) -> Tuple[List[List[str]], List[List[str]]]:
         """
         Build vocabularies from parallel corpus
         
@@ -441,8 +475,7 @@ class TranslationTokenizer:
         print("🔤 TRAINING TOKENIZERS AND BUILDING VOCABULARIES")
         print("="*60)
         
-        # Train tokenizers
-        
+        # Train Chinese tokenizers
         if rebuild_chinese_model:
             print("\n🎓 Step 1: Training Chinese SentencePiece tokenizer...")
             self.chinese_tokenizer.train(src_sentences, model_prefix=chinese_model_prefix)
@@ -451,17 +484,7 @@ class TranslationTokenizer:
                 raise ValueError("chinese_model_path must be provided to load existing model")
             print(f"\nℹ️ Step 1: Skipping Chinese tokenizer training (using existing model {self.chinese_model_path})")
             self.chinese_tokenizer.load_model(self.chinese_model_path)
-        
-        
-        if rebuild_english_model:
-            print("\n🎓 Step 2: Training English BPE tokenizer...")
-            self.english_tokenizer.train(tgt_sentences, save_path=english_model_path)
-        else:
-            if self.english_model_path is None:
-                raise ValueError("english_model_path must be provided to load existing model")
-            print(f"\nℹ️ Step 2: Skipping English tokenizer training (using existing model {self.english_model_path})")
-            self.english_tokenizer.load_model(self.english_model_path)
-        
+
         # Tokenize all sentences
         print("\n📝 Step 3: Tokenizing source sentences (Chinese) with SentencePiece...")
         src_tokenized = [self.tokenize_source(s) for s in src_sentences]
