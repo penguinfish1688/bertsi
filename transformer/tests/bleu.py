@@ -24,38 +24,52 @@ def greedy_decode(model, src_sentence, tokenizer, max_len, device):
     """
     model.eval()
     
+    # Tokenize and encode source
+    src_tokens = tokenizer.tokenize_source(src_sentence)
+    
+    if len(src_tokens) > max_len:
+        src_tokens = src_tokens[:max_len]
+
+    src_ids = tokenizer.src_vocab.encode(src_tokens)
+    src_tensor = torch.tensor([src_ids], device=device)  # (1, src_len)
+    
+    # Get encoder output
     with torch.no_grad():
-        # Encode source sentence
-        src_encoded = tokenizer.encode_source(src_sentence)
-        src_tensor = torch.tensor([src_encoded], dtype=torch.long).to(device)  # [1, src_len]
-        
-        # Start with BOS token
-        tgt_indices = [tokenizer.tgt_vocab.bos_idx]
-        
+        memory = model.encode(src_tensor)
+    
+    # Start decoding
+    bos_idx = tokenizer.tgt_vocab.bos_idx
+    eos_idx = tokenizer.tgt_vocab.eos_idx
+    
+    tgt_ids = [bos_idx]
+    
+    with torch.no_grad():
         for _ in range(max_len):
-            tgt_tensor = torch.tensor([tgt_indices], dtype=torch.long).to(device)  # [1, tgt_len]
+            tgt_tensor = torch.tensor([tgt_ids], device=device)
+            output = model.decode(tgt_tensor, memory, src_tensor)
             
-            # Forward pass
-            output = model(src_tensor, tgt_tensor)  # [1, tgt_len, vocab_size]
+            next_token_logits = output[0, -1, :]
+            next_token = next_token_logits.argmax().item()
             
-            # Get prediction for next token (last position)
-            next_token_logits = output[0, -1, :]  # [vocab_size]
-            next_token_idx = next_token_logits.argmax().item()
+            tgt_ids.append(next_token)
             
-            # Add to sequence
-            tgt_indices.append(next_token_idx)
-            
-            # Stop if EOS token is generated
-            if next_token_idx == tokenizer.tgt_vocab.eos_idx:
+            if next_token == eos_idx:
                 break
-        
-        # Decode to text
-        translation = tokenizer.decode_target(tgt_indices)
-        
-        # Get token strings for debugging
-        output_tokens = tokenizer.tgt_vocab.decode(tgt_indices, remove_special=True)
-        
-        return translation, output_tokens
+    
+    # Get token strings from vocabulary
+    result_tokens = tokenizer.tgt_vocab.decode(tgt_ids, remove_special=False)
+    
+    # For proper English text reconstruction:
+    # Filter out special tokens and join
+    filtered_tokens = [t for t in result_tokens if t not in ['<bos>', '<eos>', '<pad>', '<unk>']]
+    
+    # Use English tokenizer's detokenize method which properly handles BPE
+    if filtered_tokens:
+        decoded_text = tokenizer.english_tokenizer.detokenize(filtered_tokens)
+    else:
+        decoded_text = ""
+    
+    return decoded_text, filtered_tokens
 
 
 def load_wmt19_stream(num_samples=100):
