@@ -434,11 +434,11 @@ class TranslationTokenizer:
         """
         self.config = config
         self.chinese_model_path = config.chinese_model_path
-        self.chinese_tokenizer = ChineseTokenizer(
+        self.chinese_tokenizer: ChineseTokenizer = ChineseTokenizer(
             model_path=config.chinese_model_path,
             vocab_size=chinese_vocab_size
         )
-        self.english_tokenizer = EnglishTokenizer()
+        self.english_tokenizer: EnglishTokenizer = EnglishTokenizer()
 
         self.src_vocab = Vocabulary(
             config.pad_token, config.unk_token,

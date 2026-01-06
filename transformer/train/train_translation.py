@@ -115,6 +115,7 @@ def evaluate(model, dataloader, criterion, accelerator, max_len):
     return total_loss / max(num_batches, 1)
 
 
+
 def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu", unwrap=False):
     """Decode using greedy search
     
@@ -164,9 +165,20 @@ def greedy_decode(model, src_sentence, tokenizer, max_len, device="cpu", unwrap=
             if next_token == eos_idx:
                 break
     
-    # Decode to text
-    result_tokens = tokenizer.tgt_vocab.decode(tgt_ids)
-    return " ".join(result_tokens)
+    # Get token strings from vocabulary
+    result_tokens = tokenizer.tgt_vocab.decode(tgt_ids, remove_special=False)
+    
+    # For proper English text reconstruction:
+    # Filter out special tokens and join
+    filtered_tokens = [t for t in result_tokens if t not in ['<bos>', '<eos>', '<pad>', '<unk>']]
+    
+    # Use English tokenizer's detokenize method which properly handles BPE
+    if filtered_tokens:
+        decoded_text = tokenizer.english_tokenizer.detokenize(filtered_tokens)
+    else:
+        decoded_text = ""
+    
+    return decoded_text, result_tokens
 
 
 def load_model_and_translate(checkpoint_path, config_path="transformer/config.yaml", 
@@ -257,9 +269,10 @@ def load_model_and_translate(checkpoint_path, config_path="transformer/config.ya
     print("="*60)
     
     for i, src in enumerate(test_sentences, 1):
-        translation = greedy_decode(model, src, tokenizer, config.max_len, device=device)
+        translation, tokens = greedy_decode(model, src, tokenizer, config.max_len, device=device)
         print(f"\n[{i}]")
         print(f"   🇨🇳 Chinese: {src}")
+        print(f"   🔤 Tokens: {tokens}")
         print(f"   🇺🇸 English: {translation}")
     
     print("\n" + "="*60)
@@ -520,7 +533,7 @@ def train(config_path="transformer/config.yaml", use_sample=True, resume_from=No
     inference_device = accelerator.device if use_accelerate else device
     
     for src in test_sentences:
-        translation = greedy_decode(unwrapped_model, src, tokenizer, config.max_len, device=inference_device)
+        translation, tokens = greedy_decode(unwrapped_model, src, tokenizer, config.max_len, device=inference_device)
         print(f"   🇨🇳 {src}")
         print(f"   🇺🇸 {translation}")
         print()
@@ -548,6 +561,10 @@ if __name__ == "__main__":
                         help='Mixed precision mode: no, fp16, or bf16')
     parser.add_argument('--sentences', type=str, nargs='+',
                         help='Custom sentences to translate (for test mode)')
+    parser.add_argument('--eval_bleu', action='store_true',
+                        help='Evaluate BLEU score on validation set')
+    parser.add_argument('--bleu_samples', type=int, default=None,
+                        help='Number of samples to use for BLEU evaluation (default: all)')
 
     args = parser.parse_args()
     
@@ -561,6 +578,19 @@ if __name__ == "__main__":
             use_accelerate=not args.no_accelerate,
             mixed_precision=args.mixed_precision
         )
+        
+        # Evaluate BLEU if requested
+        if args.eval_bleu:
+            from transformer.data.config import TranslationConfig
+            config = TranslationConfig.from_yaml(args.config)
+            pipeline, _, _ = create_pipeline(use_sample=args.use_sample, config=config)
+            val_loader = pipeline.get_dataloader("val", shuffle=False)
+            
+            if args.no_accelerate:
+                accelerator = DummyAccelerator(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+            else:
+                accelerator = Accelerator()
+            
     else:
         # Test mode - load and translate
         model, tokenizer = load_model_and_translate(
@@ -569,3 +599,13 @@ if __name__ == "__main__":
             test_sentences=args.sentences,
             use_sample=args.use_sample
         )
+        
+        # Evaluate BLEU if requested
+        if args.eval_bleu:
+            from transformer.tests.bleu import evaluate_bleu
+            bleu_score = evaluate_bleu(
+                checkpoint_path=args.checkpoint,
+                num_samples=args.bleu_samples if args.bleu_samples is not None else 100,
+                config_path=args.config
+            )
+            print(f"\n🔵 BLEU Score: {bleu_score:.2f}")
