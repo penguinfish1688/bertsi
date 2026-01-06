@@ -144,15 +144,7 @@ def evaluate_bleu(
     # Create tokenizer (need to load vocabularies from cache)
     print(f"\n📚 Loading tokenizer and vocabularies...")
     tokenizer = TranslationTokenizer(config)
-    
-    # We need to load vocabularies from a cached dataset
-    # Find any cached dataset to load vocabularies
-    cache_files = [f for f in os.listdir(config.cache_dir) if f.endswith('.pkl')]
-    if not cache_files:
-        raise ValueError("No cached dataset found! Please train the model first to create vocabularies.")
-    
-    cache_path = os.path.join(config.cache_dir, cache_files[0])
-    print(f"   Loading vocabularies from: {cache_path}")
+
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n📱 Device: {device}")
@@ -191,18 +183,26 @@ def evaluate_bleu(
     model.eval()
 
     # Stream load WMT19 data
+    print("\n" + "="*60)
+    print(f"🔮 LOADING {num_samples} samples from wmt19")
+    print("="*60)
     chinese_sentences, english_references = load_wmt19_stream(num_samples)
     
     # Run translations
     print("\n" + "="*60)
     print("🔮 TRANSLATING SENTENCES")
     print("="*60)
-    
+    references = []
     hypotheses = []
     
     for i, zh_sentence in enumerate(chinese_sentences):
-        translation, _ = greedy_decode(model, zh_sentence, tokenizer, config.max_len, device=device)
+        try:
+            translation, _ = greedy_decode(model, zh_sentence, tokenizer, config.max_len, device=device)
+        except Exception as e:
+            print(f"❌ Error during translation of sample {i+1}: {e}")
+            continue
         hypotheses.append(translation)
+        references.append(english_references[i])
         
         if (i + 1) % 20 == 0:
             print(f"   Translated {i + 1}/{len(chinese_sentences)} sentences...")
@@ -222,7 +222,7 @@ def evaluate_bleu(
     print("📊 COMPUTING BLEU SCORE")
     print("="*60)
     
-    bleu = corpus_bleu(hypotheses, [english_references])
+    bleu = corpus_bleu(hypotheses, [references])
     
     print(f"\n📈 BLEU Score: {bleu.score:.2f}")
     print(f"   Evaluated on {len(hypotheses)} samples from WMT19")
@@ -234,7 +234,7 @@ def evaluate_bleu(
     for i in range(min(5, len(hypotheses))):
         print(f"\n[{i+1}]")
         print(f"   Chinese:    {chinese_sentences[i][:50]}...")
-        print(f"   Reference:  {english_references[i][:50]}...")
+        print(f"   Reference:  {references[i][:50]}...")
         print(f"   Hypothesis: {hypotheses[i][:50]}...")
     
     print("\n" + "="*60)
