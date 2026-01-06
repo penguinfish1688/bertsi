@@ -59,4 +59,13 @@ python -m transformer.train.train_translation
 - 4 Epochs
 - Trained on one H200 for 3.5 hours
 - BLEU score ~21
-- Loss vs Time 
+
+### Checkpoint Loss
+
+| Filename                | Epoch | Train Loss | Val Loss |
+|------------------------:|:-----:|-----------:|---------:|
+| checkpoint_epoch_1.pt   | 1     | 2.2865     | 1.5992   |
+| checkpoint_epoch_2.pt   | 2     | 1.6085     | 1.4466   |
+| checkpoint_epoch_3.pt   | 3     | 1.4842     | 1.3754   |
+| checkpoint_epoch_4.pt   | 4     | 1.4127     | 1.3254   |
+| best_model.pt           | 4     | 1.4127     | 1.3254   |
