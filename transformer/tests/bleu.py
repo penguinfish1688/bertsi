@@ -144,7 +144,24 @@ def evaluate_bleu(
     # Create tokenizer (need to load vocabularies from cache)
     print(f"\n📚 Loading tokenizer and vocabularies...")
     tokenizer = TranslationTokenizer(config)
-
+    
+    # We need to load vocabularies from a cached dataset
+    # Find any cached dataset to load vocabularies
+    import pickle
+    cache_files = [f for f in os.listdir(config.cache_dir) if f.endswith('.pkl')]
+    if not cache_files:
+        raise ValueError("No cached dataset found! Please train the model first to create vocabularies.")
+    
+    cache_path = os.path.join(config.cache_dir, cache_files[0])
+    print(f"   Loading vocabularies from: {cache_path}")
+    
+    with open(cache_path, 'rb') as f:
+        cached_data = pickle.load(f)
+    
+    tokenizer.src_vocab = cached_data['src_vocab']
+    tokenizer.tgt_vocab = cached_data['tgt_vocab']
+    
+    print(f"   ✅ Vocabularies loaded: {len(tokenizer.src_vocab)} src tokens, {len(tokenizer.tgt_vocab)} tgt tokens")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n📱 Device: {device}")

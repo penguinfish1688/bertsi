@@ -593,13 +593,6 @@ if __name__ == "__main__":
             
     else:
         # Test mode - load and translate
-        model, tokenizer = load_model_and_translate(
-            checkpoint_path=args.checkpoint,
-            config_path=args.config,
-            test_sentences=args.sentences,
-            use_sample=args.use_sample
-        )
-        
         # Evaluate BLEU if requested
         if args.eval_bleu:
             from transformer.tests.bleu import evaluate_bleu
@@ -609,3 +602,11 @@ if __name__ == "__main__":
                 config_path=args.config
             )
             print(f"\n🔵 BLEU Score: {bleu_score:.2f}")
+        else:
+            model, tokenizer = load_model_and_translate(
+                checkpoint_path=args.checkpoint,
+                config_path=args.config,
+                test_sentences=args.sentences,
+                use_sample=args.use_sample
+            )
+        
